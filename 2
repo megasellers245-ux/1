@@ -7,6 +7,83 @@ import time
 from openai import OpenAI
 from lark_oapi import Client
 from lark_oapi.api.bitable.v1 import *
+# ================= 1. 配置信息 =================
+# 飞书配置 (根据你提供的信息)
+APP_ID = "cli_a9f1a525307a9cbd"
+APP_SECRET = "TKhwibOVNhoEdyCrkCnWPdxZOjPka3Rf"
+APP_TOKEN = "P0WpbMHLBa6zaQsyyvPcy2eqnuf"
+# 【需修改】请填入你通过“复制数据表ID”获取到的 tbl... 开头的字符串
+TABLE_ID = "tbl0MFhSZr8yuIsk"
+
+# AI 配置 (DeepSeek 方案)
+# 【需修改】请填入你在 DeepSeek 官网申请到的 sk-xxxxxx
+DEEPSEEK_API_KEY = "sk-6f3ff713536f45c0a6fc702ffa77eebf"
+
+client_ai = OpenAI(
+    api_key=DEEPSEEK_API_KEY,
+    base_url="https://api.deepseek.com"
+)
+
+
+# ================= 2. 核心逻辑函数 =================
+def extract_pdf_text(uploaded_file):
+    """提取 PDF 的全部文本内容"""
+    # 打开上传的 PDF 文件
+    doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+    text = ""
+
+    # 直接遍历 doc 对象，即可按顺序读取所有页面
+    for page in doc:
+        text += page.get_text()
+
+    return text
+
+
+def ai_extract_parameters(text, keywords):
+    """调用 DeepSeek 提取数据"""
+    prompt = f"""
+    你是一个专业的电池/化学材料科研助手。
+    请从以下提供的论文文本中，提取出指定参数的数值和单位。
+
+    提取要求：
+    1. 必须严格按照参数清单提取。
+    2. 返回格式必须是纯 JSON，没有任何 Markdown 标识。
+    3. 如果文中没有提到该参数，请返回 "N/A"。
+    4. 字段名必须是中文参数名。
+
+    参数清单：{", ".join(keywords)}
+
+    论文文本：
+    {text[:8000]} 
+    """
+
+    try:
+        response = client_ai.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}
+        )
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        st.error(f"AI 提取出错: {e}")
+        return None
+
+
+def upload_to_feishu(data_dict):
+    """将结果写入飞书多维表格"""
+    sdk_client = Client.builder().app_id(APP_ID).app_secret(APP_SECRET).build()
+
+    # 构造飞书的写入格式
+    # 注意：确保飞书表格中的列名与 data_dict 的 Key 完全一致
+    request = CreateAppTableRecordRequest.builder() \
+        .app_token(APP_TOKEN) \
+        .table_id(TABLE_ID) \
+        .request_body(AppTableRecord.builder().fields(data_dict).build()) \
+        .build()
+
+    response = sdk_client.bitable.v1.app_table_record.create(request)
+    return response.success()
+
 st.set_page_config(page_title="论文参数全自动提取器", layout="wide")
 st.title("📚 论文参数全自动提取 & 飞书同步")
 
