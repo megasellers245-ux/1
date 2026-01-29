@@ -1,0 +1,58 @@
+import streamlit as st
+import fitz
+import pandas as pd
+
+import json
+import time
+from openai import OpenAI
+from lark_oapi import Client
+from lark_oapi.api.bitable.v1 import *
+st.set_page_config(page_title="论文参数全自动提取器", layout="wide")
+st.title("📚 论文参数全自动提取 & 飞书同步")
+
+# 读取本地的关键词列表
+try:
+    keywords_df = pd.read_csv("参数关键字.xlsx - Sheet1.csv")
+    keywords_list = keywords_df['参数（中文）'].tolist()
+    st.sidebar.success(f"已加载 {len(keywords_list)} 个关键词")
+except:
+    st.sidebar.error("请确保 '参数关键字.xlsx - Sheet1.csv' 文件在脚本同目录下")
+    keywords_list = []
+
+uploaded_files = st.file_uploader("上传论文 PDF (支持批量拖入)", type="pdf", accept_multiple_files=True)
+
+if st.button("开始提取并提交至飞书"):
+    if not uploaded_files:
+        st.warning("请先上传 PDF 文件")
+    elif not keywords_list:
+        st.error("关键词列表为空")
+    else:
+        progress_bar = st.progress(0)
+        for i, pdf_file in enumerate(uploaded_files):
+            with st.status(f"正在处理: {pdf_file.name}...", expanded=True) as status:
+                # 1. 提取文本
+                st.write("正在读取文本...")
+                text = extract_pdf_text(pdf_file)
+                
+                # 2. AI 提取
+                st.write("AI 正在深度解析关键词数据...")
+                result = ai_extract_parameters(text, keywords_list)
+                
+                if result:
+                    # 添加文件名作为记录名
+                    result["论文标题"] = pdf_file.name 
+                    
+                    # 3. 提交飞书
+                    st.write("正在将数据写入飞书多维表格...")
+                    success = upload_to_feishu(result)
+                    
+                    if success:
+                        status.update(label=f"✅ {pdf_file.name} 已同步至飞书", state="complete")
+                    else:
+                        status.update(label=f"❌ {pdf_file.name} 同步飞书失败", state="error")
+                
+                # 更新进度条
+                progress_bar.progress((i + 1) / len(uploaded_files))
+        
+        st.balloons()
+        st.success("所有任务已完成！请检查你的飞书多维表格。")
